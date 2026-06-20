@@ -1,0 +1,33 @@
+{
+  "name": "@taporder/api",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.9.0",
+    "@taporder/types": "*",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.4.0",
+    "@fastify/websocket": "^11.0.2",
+    "ioredis": "^5.6.1",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.3",
+    "@types/node-cron": "^3.0.11",
+    "prisma": "^6.9.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.19.4",
+    "typescript": "*"
+  }
+}

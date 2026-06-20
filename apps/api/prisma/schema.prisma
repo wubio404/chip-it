@@ -1,0 +1,130 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Venue {
+  id              String   @id @default(uuid())
+  slug            String   @unique
+  name            String
+  logo_url        String?
+  primary_color   String   @default("#000000")
+  default_locale  String   @default("ar")
+  pos_type        PosType  @default(PRINT_FALLBACK)
+  pos_credentials Json?
+  db_config       Json?
+  paymob_config   Json?
+  stock_buffer    Int      @default(0)
+  active          Boolean  @default(true)
+  created_at      DateTime @default(now())
+
+  tables     Table[]
+  menu_items MenuItem[]
+  orders     Order[]
+  agents     Agent[]
+}
+
+model Table {
+  id       String @id @default(uuid())
+  venue_id String
+  label    String
+  nfc_slug String @unique
+
+  venue Venue @relation(fields: [venue_id], references: [id])
+}
+
+model MenuItem {
+  id             String   @id @default(uuid())
+  venue_id       String
+  sku            String
+  pos_sku        String?
+  name           String
+  name_ar        String?
+  description    String?
+  description_ar String?
+  price          Int
+  category       String
+  category_ar    String?
+  available      Boolean  @default(true)
+  stock_count    Int?
+  reserved_count Int      @default(0)
+  image_url      String?
+
+  venue Venue @relation(fields: [venue_id], references: [id])
+}
+
+model Order {
+  id             String        @id @default(uuid())
+  venue_id       String
+  table_label    String
+  customer_name  String?
+  customer_phone String?
+  items          Json
+  total          Int
+  status         OrderStatus   @default(CREATED)
+  payment_method PaymentMethod @default(CARD)
+  payment_status PaymentStatus @default(UNPAID)
+  payment_ref    String?
+  refund_ref     String?
+  pos_ref        String?
+  routing_tier   String?
+  cancel_reason  String?
+  paid_at        DateTime?
+  created_at     DateTime      @default(now())
+  updated_at     DateTime      @updatedAt
+
+  venue Venue @relation(fields: [venue_id], references: [id])
+}
+
+model Agent {
+  id             String      @id @default(uuid())
+  venue_id       String      @unique
+  last_heartbeat DateTime?
+  status         AgentStatus @default(OFFLINE)
+  current_tier   String?
+  schema_ok      Boolean     @default(true)
+
+  venue Venue @relation(fields: [venue_id], references: [id])
+}
+
+enum PosType {
+  FOODICS
+  DB_INJECTOR
+  PRINT_FALLBACK
+}
+
+enum OrderStatus {
+  CREATED
+  PAYMENT_PENDING
+  CONFIRMED
+  ROUTING
+  INJECTED
+  PRINTED
+  FULFILLED
+  CANCELLED
+  FAILED
+  EXPIRED
+}
+
+enum PaymentMethod {
+  CARD
+  APPLE_PAY
+  CASH
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  REFUNDED
+  VOIDED
+}
+
+enum AgentStatus {
+  ONLINE
+  OFFLINE
+  DEGRADED
+}

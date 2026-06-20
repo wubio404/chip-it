@@ -1,0 +1,33 @@
+{
+  "menu": {
+    "sold_out": "نفذ",
+    "your_cart": "سلتك",
+    "empty": "السلة فارغة",
+    "checkout": "إتمام الطلب"
+  },
+  "checkout": {
+    "title": "تفاصيل الطلب",
+    "name_label": "الاسم",
+    "name_placeholder": "اسمك (اختياري)",
+    "payment_label": "طريقة الدفع",
+    "cash": "كاش عند التسليم",
+    "card": "بطاقة بنكية",
+    "apple_pay": "Apple Pay",
+    "total": "الإجمالي",
+    "confirm": "تأكيد الطلب",
+    "processing": "جاري التأكيد..."
+  },
+  "confirm": {
+    "title": "تم استلام طلبك",
+    "order_num": "طلب رقم",
+    "table": "الطاولة",
+    "pending": "جاري التحضير...",
+    "payment_pending": "في انتظار الدفع...",
+    "confirmed": "تم تأكيد طلبك!",
+    "cancelled": "تم إلغاء الطلب",
+    "failed": "فشل الطلب",
+    "cancel_btn": "إلغاء الطلب",
+    "cancelling": "جاري الإلغاء...",
+    "conn_error": "مشكلة في الاتصال — جاري إعادة المحاولة"
+  }
+}

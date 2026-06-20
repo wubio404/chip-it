@@ -1,0 +1,22 @@
+{
+  "name": "@taporder/agent",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@taporder/types": "*",
+    "dotenv": "^16.4.7",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.3",
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.19.4",
+    "typescript": "*"
+  }
+}

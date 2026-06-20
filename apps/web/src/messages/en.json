@@ -1,0 +1,33 @@
+{
+  "menu": {
+    "sold_out": "Sold Out",
+    "your_cart": "Your Cart",
+    "empty": "Your cart is empty",
+    "checkout": "Checkout"
+  },
+  "checkout": {
+    "title": "Order Details",
+    "name_label": "Name",
+    "name_placeholder": "Your name (optional)",
+    "payment_label": "Payment Method",
+    "cash": "Cash on Delivery",
+    "card": "Card",
+    "apple_pay": "Apple Pay",
+    "total": "Total",
+    "confirm": "Confirm Order",
+    "processing": "Confirming..."
+  },
+  "confirm": {
+    "title": "Order Received!",
+    "order_num": "Order",
+    "table": "Table",
+    "pending": "Preparing your order...",
+    "payment_pending": "Waiting for payment...",
+    "confirmed": "Your order is confirmed!",
+    "cancelled": "Order cancelled",
+    "failed": "Order failed",
+    "cancel_btn": "Cancel Order",
+    "cancelling": "Cancelling...",
+    "conn_error": "Connection issue — retrying..."
+  }
+}
