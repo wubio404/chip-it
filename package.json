@@ -10,6 +10,7 @@
     "dev": "turbo run dev",
     "typecheck": "turbo run typecheck"
   },
+  "packageManager": "npm@11.13.0",
   "devDependencies": {
     "turbo": "^2.9.18",
     "typescript": "^5.8.3"

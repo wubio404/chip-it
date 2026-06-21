@@ -9,6 +9,14 @@ import { formatEGP } from '@/lib/money';
 import { createOrder } from '@/lib/api';
 import type { VenueResponse, MenuItem } from '@/lib/api';
 
+/** Returns 1–2 initials from a venue name (works for Arabic and Latin). */
+function getInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  if (words.length === 1) return words[0][0] ?? '?';
+  return (words[0][0] ?? '') + (words[1][0] ?? '');
+}
+
 interface Props {
   venue: VenueResponse;
   tableNfcSlug: string;
@@ -127,10 +135,13 @@ export function MenuPage({ venue, tableNfcSlug, tableLabel }: Props) {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* ── Header ── */}
-      <header className="sticky top-0 z-30 bg-white border-b border-gray-100 shadow-sm">
-        <div className="flex items-center justify-between px-4 py-3 max-w-2xl mx-auto">
-          <div className="flex items-center gap-3 rtl:flex-row-reverse">
-            {venue.logo_url && (
+      <header className="sticky top-0 z-30 bg-white shadow-sm">
+        {/* Venue-primary accent bar */}
+        <div className="h-1 bg-[var(--venue-primary)]" />
+        <div className="flex items-center justify-between px-4 py-3 max-w-2xl mx-auto border-b border-gray-100">
+          <div className="flex items-center gap-3 rtl:flex-row-reverse min-w-0">
+            {/* Logo or initials avatar */}
+            {venue.logo_url ? (
               <Image
                 src={venue.logo_url}
                 alt={venue.name}
@@ -138,12 +149,23 @@ export function MenuPage({ venue, tableNfcSlug, tableLabel }: Props) {
                 height={36}
                 className="rounded-full object-cover flex-shrink-0"
               />
+            ) : (
+              <div
+                className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0 select-none"
+                style={{ backgroundColor: 'var(--venue-primary)' }}
+                aria-hidden
+              >
+                {getInitials(venue.name)}
+              </div>
             )}
-            <span className="font-bold text-gray-900 text-base leading-tight">{venue.name}</span>
+            <div className="flex flex-col min-w-0">
+              <span className="font-bold text-gray-900 text-base leading-tight truncate">{venue.name}</span>
+              <span className="text-xs text-gray-400 leading-tight">{tableLabel}</span>
+            </div>
           </div>
           <button
             onClick={() => setLocale(locale === 'ar' ? 'en' : 'ar')}
-            className="text-sm font-medium px-3 py-1.5 rounded-full border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors flex-shrink-0"
+            className="text-sm font-medium px-3 py-1.5 rounded-full border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors flex-shrink-0 ms-3"
           >
             {locale === 'ar' ? 'English' : 'العربية'}
           </button>
@@ -154,7 +176,7 @@ export function MenuPage({ venue, tableNfcSlug, tableLabel }: Props) {
       <main className="max-w-2xl mx-auto px-4 pb-32 pt-4">
         {categories.map(({ displayName, items }) => (
           <section key={displayName} className="mb-8">
-            <h2 className="text-base font-bold text-gray-700 mb-3 pb-2 border-b border-gray-100 uppercase tracking-wide">
+            <h2 className="text-xs font-bold text-[var(--venue-primary)] mb-3 pb-2 border-b border-gray-100 uppercase tracking-widest">
               {displayName}
             </h2>
             <div className="space-y-3">
@@ -168,7 +190,7 @@ export function MenuPage({ venue, tableNfcSlug, tableLabel }: Props) {
                 return (
                   <div
                     key={item.sku}
-                    className={`bg-white rounded-xl border border-gray-100 p-3 flex gap-3 items-start${!item.available ? ' opacity-50' : ''}`}
+                    className={`bg-white rounded-xl border border-gray-100 p-3 flex gap-3 items-start shadow-[0_1px_3px_rgba(0,0,0,0.04)]${!item.available ? ' opacity-50' : ''}`}
                   >
                     {/* Thumbnail */}
                     {item.image_url ? (

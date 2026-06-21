@@ -310,7 +310,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const order = await prisma.order.findUnique({
         where: { id: request.params.id },
-        select: { id: true, status: true, payment_status: true, routing_tier: true },
+        select: { id: true, status: true, payment_status: true, routing_tier: true, table_label: true, total: true },
       });
       if (!order) return reply.status(404).send({ error: 'order_not_found' });
       return reply.send(order);

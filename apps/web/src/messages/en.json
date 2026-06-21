@@ -21,6 +21,7 @@
     "title": "Order Received!",
     "order_num": "Order",
     "table": "Table",
+    "total": "Total",
     "pending": "Preparing your order...",
     "payment_pending": "Waiting for payment...",
     "confirmed": "Your order is confirmed!",

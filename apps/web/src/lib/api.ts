@@ -60,6 +60,8 @@ export interface OrderStatus {
   status: string;
   payment_status: string;
   routing_tier: string | null;
+  table_label: string;
+  total: number; // integer piastres — display only, never send back to API
 }
 
 /** Called from a server component — uses direct API URL (no CORS). */
