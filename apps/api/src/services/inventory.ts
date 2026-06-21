@@ -15,6 +15,11 @@ function sorted(items: InventoryItem[]): InventoryItem[] {
 // Reserve stock for items in a new order. Must be called inside a Prisma $transaction.
 // Throws on item not found, item unavailable, or insufficient stock.
 export async function reserveStock(tx: Tx, venueId: string, items: InventoryItem[]): Promise<void> {
+  const venueRows = await tx.$queryRaw<Array<{ stock_buffer: number }>>`
+    SELECT stock_buffer FROM "Venue" WHERE id = ${venueId}
+  `;
+  const stockBuffer = venueRows[0]?.stock_buffer ?? 0;
+
   for (const { sku, qty } of sorted(items)) {
     const rows = await tx.$queryRaw<Array<{
       id: string;
@@ -39,7 +44,7 @@ export async function reserveStock(tx: Tx, venueId: string, items: InventoryItem
     }
 
     const newReserved = row.reserved_count + qty;
-    const autoDisable = row.stock_count !== null && row.stock_count - newReserved <= 0;
+    const autoDisable = row.stock_count !== null && row.stock_count - newReserved <= stockBuffer;
 
     await tx.menuItem.update({
       where: { id: row.id },
@@ -83,12 +88,19 @@ export async function commitStock(tx: Tx, venueId: string, items: InventoryItem[
 // Safe to call exactly once per order (caller must hold the order row lock and verify
 // status === CREATED before calling — prevents double-release going negative).
 export async function releaseReservation(tx: Tx, venueId: string, items: InventoryItem[]): Promise<void> {
+  const venueRows = await tx.$queryRaw<Array<{ stock_buffer: number }>>`
+    SELECT stock_buffer FROM "Venue" WHERE id = ${venueId}
+  `;
+  const stockBuffer = venueRows[0]?.stock_buffer ?? 0;
+
   for (const { sku, qty } of sorted(items)) {
     const rows = await tx.$queryRaw<Array<{
       id: string;
+      stock_count: number | null;
       reserved_count: number;
+      available: boolean;
     }>>`
-      SELECT id, reserved_count
+      SELECT id, stock_count, reserved_count, available
       FROM "MenuItem"
       WHERE venue_id = ${venueId} AND sku = ${sku}
       FOR UPDATE
@@ -100,9 +112,19 @@ export async function releaseReservation(tx: Tx, venueId: string, items: Invento
     // Clamp to 0 — safety net against any double-release edge case
     const newReserved = Math.max(0, row.reserved_count - qty);
 
+    // Symmetric with reserveStock's autoDisable: re-enable when effective stock rises
+    // back above the venue's stock_buffer. Only applies to finite-stock items.
+    const shouldReEnable =
+      !row.available &&
+      row.stock_count !== null &&
+      row.stock_count - newReserved > stockBuffer;
+
     await tx.menuItem.update({
       where: { id: row.id },
-      data: { reserved_count: newReserved },
+      data: {
+        reserved_count: newReserved,
+        ...(shouldReEnable ? { available: true } : {}),
+      },
     });
   }
 }

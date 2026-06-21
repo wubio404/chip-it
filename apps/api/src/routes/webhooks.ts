@@ -133,16 +133,34 @@ export async function webhookRoutes(fastify: FastifyInstance) {
 
       // --- Verified success. EXACT sequence (locked, single transaction):
       //     PAID + paid_at + payment_ref → commit stock → status CONFIRMED. ---
+      let shouldRoute = false;
       try {
         await prisma.$transaction(async (tx) => {
           // Lock the order row first (consistent lock order: Order then MenuItem).
-          const rows = await tx.$queryRaw<Array<{ id: string; payment_status: string }>>`
-            SELECT id, payment_status FROM "Order" WHERE id = ${order.id} FOR UPDATE
+          const rows = await tx.$queryRaw<Array<{ id: string; status: string; payment_status: string }>>`
+            SELECT id, status, payment_status FROM "Order" WHERE id = ${order.id} FOR UPDATE
           `;
           if (rows.length === 0) throw new Error('order_vanished');
           // Re-check idempotency inside the lock — guards against concurrent duplicates.
           if (rows[0].payment_status === 'PAID') {
             fastify.log.info({ event: 'paymob_webhook_duplicate_ignored_locked', order_id: order.id });
+            return;
+          }
+
+          // B1 edge case: cancel/webhook race. Order was cancelled or expired while
+          // payment was in flight. Record receipt of money but do NOT confirm or route.
+          // Flagged for manual refund — refund API is a later session.
+          if (rows[0].status === 'CANCELLED' || rows[0].status === 'EXPIRED') {
+            await tx.order.update({
+              where: { id: order.id },
+              data: { payment_status: 'PAID', paid_at: new Date(), payment_ref: paymentRef },
+            });
+            fastify.log.warn({
+              event: 'paid_after_cancel',
+              order_id: order.id,
+              order_status: rows[0].status,
+              payment_ref: paymentRef,
+            });
             return;
           }
 
@@ -157,11 +175,17 @@ export async function webhookRoutes(fastify: FastifyInstance) {
             where: { id: order.id },
             data: { status: 'CONFIRMED' },
           });
+
+          shouldRoute = true;
         });
       } catch (err) {
         fastify.log.error({ event: 'paymob_confirm_failed', order_id: order.id, error: String(err) });
         // Confirmation failed before commit — return 500 so Paymob retries.
         return reply.status(500).send({ error: 'confirm_failed' });
+      }
+
+      if (!shouldRoute) {
+        return reply.status(200).send({ ok: true });
       }
 
       fastify.log.info({ event: 'order_confirmed', order_id: order.id, venue_id: order.venue_id, status: 'CONFIRMED', payment_ref: paymentRef });

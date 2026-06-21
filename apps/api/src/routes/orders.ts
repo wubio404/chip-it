@@ -358,8 +358,9 @@ export async function orderRoutes(fastify: FastifyInstance) {
 
           const order = rows[0];
 
-          // Only CREATED orders can be cancelled — enforced inside the lock to prevent races
-          if (order.status !== 'CREATED') throw httpError(409, 'cancel_not_allowed');
+          // Spec 5.9: customer may cancel before CONFIRMED — CREATED or PAYMENT_PENDING.
+          // Enforced inside the lock to prevent races with the Paymob webhook.
+          if (order.status !== 'CREATED' && order.status !== 'PAYMENT_PENDING') throw httpError(409, 'cancel_not_allowed');
 
           const items = (Array.isArray(order.items) ? order.items : []) as Array<{ sku: string; qty: number }>;
 
@@ -376,7 +377,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
       } catch (err: unknown) {
         const e = err as Error & { statusCode?: number };
         if (e.statusCode === 404) return reply.status(404).send({ error: 'order_not_found' });
-        if (e.statusCode === 409) return reply.status(409).send({ error: 'cancel_not_allowed', message: 'Order can only be cancelled while in CREATED status' });
+        if (e.statusCode === 409) return reply.status(409).send({ error: 'cancel_not_allowed', message: 'Order can only be cancelled while in CREATED or PAYMENT_PENDING status' });
         throw err;
       }
     },
