@@ -2,6 +2,8 @@
 import './lib/config.js';
 
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
 import cron from 'node-cron';
 import { config } from './lib/config.js';
@@ -12,15 +14,23 @@ import { venueRoutes } from './routes/venues.js';
 import { orderRoutes, expireStaleOrders } from './routes/orders.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { agentRoutes } from './routes/agent.js';
+import { authRoutes } from './routes/auth.js';
+import { platformRoutes } from './routes/platform.js';
+import { adminRoutes } from './routes/admin.js';
 
 const server = Fastify({ logger: true });
 
+server.register(cors, { origin: config.corsOrigin, credentials: true });
+server.register(cookie); // parses Cookie header into request.cookies; enables reply.setCookie/clearCookie
 server.register(websocket);
 server.register(healthRoutes);
 server.register(venueRoutes);
-server.register(orderRoutes);
+server.register(orderRoutes);       // customer flow — intentionally UNAUTHENTICATED (guest)
 server.register(webhookRoutes);
 server.register(agentRoutes);
+server.register(authRoutes);        // login / refresh / logout
+server.register(platformRoutes);    // platform-admin-only surfaces
+server.register(adminRoutes);       // venue-scoped staff surfaces
 
 const shutdown = async (signal: string) => {
   server.log.info({ signal }, 'Shutdown signal received');

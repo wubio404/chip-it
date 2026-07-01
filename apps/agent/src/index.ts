@@ -2,7 +2,7 @@ import 'dotenv/config';
 import WebSocket from 'ws';
 import type { CanonicalOrder } from '@taporder/types';
 
-const BACKEND_WS_URL = process.env.BACKEND_WS_URL ?? 'ws://localhost:3001/agent/connect';
+const BACKEND_WS_URL = process.env.BACKEND_WS_URL ?? 'ws://localhost:3000/agent/connect';
 const VENUE_ID = process.env.VENUE_ID;
 const AGENT_API_KEY = process.env.AGENT_API_KEY;
 

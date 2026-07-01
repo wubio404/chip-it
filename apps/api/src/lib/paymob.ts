@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { config } from './config.js';
 
 // ---------------------------------------------------------------------------
 // Paymob integration — Section 5.8 + Appendix A (Section 21).
@@ -66,8 +67,8 @@ export interface CreateIntentionArgs {
   tableLabel: string;
   customerName?: string;
   customerPhone?: string;
-  notificationUrl: string;   // WEBHOOK_BASE_URL + /webhooks/paymob
-  redirectionUrl: string;    // FRONTEND_URL + /order/confirm?order=<id>
+  notificationUrl: string;   // API_BASE_URL + /webhooks/paymob
+  redirectionUrl: string;    // APP_BASE_URL + /order/confirm/<id>
 }
 
 export interface IntentionResult {
@@ -101,7 +102,7 @@ export async function createIntention(args: CreateIntentionArgs): Promise<Intent
       first_name: firstName,
       last_name: 'Customer',
       phone_number: phone,
-      email: 'guest@taporder.io',
+      email: config.guestEmail,
       country: 'EGY',
       city: 'Cairo',
       street: 'NA',
