@@ -1,6 +1,18 @@
-import { PrismaClient, PosType, AgentStatus } from '@prisma/client';
+import { PrismaClient, PosType, AgentStatus, Role } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
+
+// Dev credentials come from env so real secrets never live in source. Fallbacks
+// exist only so a fresh `db:seed` produces a working login without extra setup;
+// override them (especially the passwords) via the env vars below in any shared
+// or deployed environment.
+const SEED = {
+  adminEmail: process.env.SEED_PLATFORM_ADMIN_EMAIL ?? 'admin@taporder.local',
+  adminPassword: process.env.SEED_PLATFORM_ADMIN_PASSWORD ?? 'admin-dev-password',
+  staffEmail: process.env.SEED_VENUE_STAFF_EMAIL ?? 'staff@taporder.local',
+  staffPassword: process.env.SEED_VENUE_STAFF_PASSWORD ?? 'staff-dev-password',
+};
 
 async function main() {
   const venue = await prisma.venue.upsert({
@@ -127,6 +139,34 @@ async function main() {
   } else {
     console.log(`Agent exists.  AGENT_API_KEY=${existingAgent.id}`);
   }
+
+  // Auth accounts (Section 6). One PLATFORM_ADMIN (venue_id null → all venues) and
+  // one VENUE_STAFF scoped to the demo venue. Passwords hashed with bcrypt (12 rounds).
+  const adminHash = await bcrypt.hash(SEED.adminPassword, 12);
+  await prisma.user.upsert({
+    where: { email: SEED.adminEmail.toLowerCase() },
+    update: { password_hash: adminHash, role: Role.PLATFORM_ADMIN, venue_id: null },
+    create: {
+      email: SEED.adminEmail.toLowerCase(),
+      password_hash: adminHash,
+      role: Role.PLATFORM_ADMIN,
+      venue_id: null,
+    },
+  });
+
+  const staffHash = await bcrypt.hash(SEED.staffPassword, 12);
+  await prisma.user.upsert({
+    where: { email: SEED.staffEmail.toLowerCase() },
+    update: { password_hash: staffHash, role: Role.VENUE_STAFF, venue_id: venue.id },
+    create: {
+      email: SEED.staffEmail.toLowerCase(),
+      password_hash: staffHash,
+      role: Role.VENUE_STAFF,
+      venue_id: venue.id,
+    },
+  });
+
+  console.log(`Users: ${SEED.adminEmail} (PLATFORM_ADMIN), ${SEED.staffEmail} (VENUE_STAFF → ${venue.id})`);
 
   console.log('Seed complete.');
 }

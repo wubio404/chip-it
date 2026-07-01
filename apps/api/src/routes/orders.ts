@@ -118,8 +118,8 @@ export async function orderRoutes(fastify: FastifyInstance) {
       // that happens only on the verified paid webhook (5.8 step 7).
       // =======================================================================
       if (payment_method === 'CARD' || payment_method === 'APPLE_PAY') {
-        if (!config.frontendUrl || !config.webhookBaseUrl) {
-          fastify.log.error({ event: 'payment_not_configured', missing: 'FRONTEND_URL/WEBHOOK_BASE_URL' });
+        if (!config.appBaseUrl || !config.apiBaseUrl) {
+          fastify.log.error({ event: 'payment_not_configured', missing: 'APP_BASE_URL/API_BASE_URL' });
           return reply.status(500).send({ error: 'payment_not_configured' });
         }
 
@@ -179,14 +179,14 @@ export async function orderRoutes(fastify: FastifyInstance) {
             tableLabel: table.label,
             customerName: customer_name,
             customerPhone: customer_phone,
-            notificationUrl: `${config.webhookBaseUrl.replace(/\/$/, '')}/webhooks/paymob`,
+            notificationUrl: `${config.apiBaseUrl.replace(/\/$/, '')}/webhooks/paymob`,
             // Carry our order id in the PATH, not a query key. Gateways append their
             // own params (Paymob even clobbers a `?order=` key with its intention id),
             // but none rewrite the path — so the confirm page reads OUR id the same way
             // regardless of gateway. Keeps the redirect portable on a Paymob migration;
             // `merchant_order_id` (Paymob-specific) is only a fallback. The webhook
             // (special_reference → our id) remains the real source of truth either way.
-            redirectionUrl: `${config.frontendUrl.replace(/\/$/, '')}/order/confirm/${created.id}`,
+            redirectionUrl: `${config.appBaseUrl.replace(/\/$/, '')}/order/confirm/${created.id}`,
           });
           checkoutUrl = buildCheckoutUrl(paymobCfg.publicKey, intention.clientSecret);
         } catch (err) {

@@ -26,6 +26,21 @@ model Venue {
   menu_items MenuItem[]
   orders     Order[]
   agents     Agent[]
+  users      User[]
+}
+
+// Authenticated back-office accounts (Section 6). Customers are NOT users —
+// the ordering flow is guest/unauthenticated by design.
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password_hash String   // bcrypt, 12 rounds — never the plaintext
+  role          Role
+  venue_id      String?  // scopes VENUE_STAFF to one venue; NULL for PLATFORM_ADMIN
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  venue Venue? @relation(fields: [venue_id], references: [id])
 }
 
 model Table {
@@ -89,6 +104,12 @@ model Agent {
   schema_ok      Boolean     @default(true)
 
   venue Venue @relation(fields: [venue_id], references: [id])
+}
+
+// Authenticated roles (Section 6). Customers are unauthenticated and have no Role.
+enum Role {
+  PLATFORM_ADMIN // full access across all venues + agent/health dashboards
+  VENUE_STAFF    // scoped to a single venue (venue_id)
 }
 
 enum PosType {
