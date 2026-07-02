@@ -18,6 +18,9 @@ export interface PaymobConfig {
   publicKey: string;     // pk_... — launches the browser checkout
   integrationId: number; // online/card integration id (Apple Pay surfaced on same)
   hmacSecret: string;    // verifies webhook authenticity (21.4)
+  apiKey?: string;       // account api_key — authenticates the void/refund flow (21.5).
+                         // OPTIONAL: intention + webhook paths don't need it; only the
+                         // reversal client does. Distinct from secretKey (see 21.1 vs 21.5).
 }
 
 // A minimal shape of the venue needed to resolve Paymob keys.
@@ -48,7 +51,12 @@ export function getPaymobConfig(_venue: VenueLike): PaymobConfig {
     throw new Error('paymob_bad_integration_id');
   }
 
-  return { secretKey, publicKey, integrationId, hmacSecret };
+  // apiKey is intentionally NOT part of the required set above — the intention and
+  // webhook flows must keep working even if the reversal credential is absent. The
+  // reversal client validates its presence itself and fails loudly if it's needed.
+  const apiKey = process.env.PAYMOB_API_KEY || undefined;
+
+  return { secretKey, publicKey, integrationId, hmacSecret, apiKey };
 }
 
 export interface IntentionItem {
@@ -221,4 +229,188 @@ export function verifyPaymobHmac(obj: unknown, receivedHmac: string, hmacSecret:
   }
 
   return { valid, source };
+}
+
+// ---------------------------------------------------------------------------
+// Reversal (Void / Refund) — Section 5.9 + Appendix A (21.5). MONEY-CRITICAL.
+//
+// This flow uses the OLDER Accept auth: POST /api/auth/tokens with the account
+// `api_key` → auth token, then void/refund with that token. This is a DIFFERENT
+// credential and endpoint family from the Secret-Key auth used for intentions.
+//
+// Selection is AUTOMATIC (staff never choose): attempt VOID first (pre-settlement,
+// cheaper); if Paymob signals the transaction is already settled, fall back to
+// REFUND. Full amount only — no partial refunds this session.
+// ---------------------------------------------------------------------------
+
+// Minimal structured logger shape (Fastify's `log` satisfies this; the router
+// passes a console-JSON shim). Kept local so lib/ has no logging dependency.
+export interface PaymobLogger {
+  info(o: object, msg?: string): void;
+  warn(o: object, msg?: string): void;
+  error(o: object, msg?: string): void;
+}
+
+export type ReversalMode = 'void' | 'refund';
+
+// Thrown only when BOTH void and refund fail. Carries the raw responses so the
+// caller can log them and a human can reconcile. Never thrown on partial success.
+export class PaymobReversalError extends Error {
+  constructor(message: string, readonly detail: unknown) {
+    super(message);
+    this.name = 'PaymobReversalError';
+  }
+}
+
+interface RawResponse {
+  status: number;
+  ok: boolean;
+  body: Record<string, unknown>;
+}
+
+// Paymob's void/refund require the transaction id AS AN INTEGER ("Transaction ID is
+// always an integer"). Our payment_ref stores Paymob's obj.id, normally numeric —
+// send it as a Number so a numeric string isn't rejected as "invalid format". A
+// non-numeric id (shouldn't happen for a real Paymob txn) is passed through as-is.
+function coerceTxnId(id: string): number | string {
+  return /^\d+$/.test(id) ? Number(id) : id;
+}
+
+async function postJson(url: string, payload: object): Promise<RawResponse> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  return { status: res.status, ok: res.ok, body };
+}
+
+// Step 1 of 21.5: exchange the account api_key for a short-lived auth token.
+async function getReversalAuthToken(apiKey: string): Promise<string> {
+  const res = await postJson(`${PAYMOB_API_BASE}/api/auth/tokens`, { api_key: apiKey });
+  const token = res.body?.token;
+  if (!res.ok || typeof token !== 'string' || token.length === 0) {
+    throw new PaymobReversalError('paymob_auth_failed', { step: 'auth', ...res });
+  }
+  return token;
+}
+
+// The reversal response is a new transaction object; its `id` is what we persist
+// as refund_ref. Shapes vary slightly by account generation, so probe a few keys.
+function extractReversalId(body: Record<string, unknown>): string | null {
+  const candidates = [body.id, (body.data as Record<string, unknown> | undefined)?.id, body.transaction_id];
+  for (const c of candidates) {
+    if (c != null && (typeof c === 'string' || typeof c === 'number')) return String(c);
+  }
+  return null;
+}
+
+// Did a VOID succeed outright?  Confirmed against a real TEST response (2026-07-02):
+// HTTP 201, body.success === true, body.is_void === true, txn_response_code APPROVED.
+function voidSucceeded(res: RawResponse): boolean {
+  const b = res.body ?? {};
+  return res.ok && (b.success === true || b.success === 'true' || b.is_void === true);
+}
+
+// Does a failed VOID response indicate the transaction is ALREADY SETTLED (so we
+// must refund instead)?  >>> VERIFY AGAINST REAL RESPONSES with the probe script
+// (scripts/paymob-reversal-probe.mjs) — Paymob's exact shape differs per account.
+// Heuristic: any settlement / not-voidable / "refund instead" signal in the body.
+// Detection is based on the RESPONSE, never on elapsed time (per session brief).
+function voidIndicatesSettled(res: RawResponse): boolean {
+  const blob = JSON.stringify(res.body ?? {}).toLowerCase();
+  return (
+    blob.includes('settle') ||        // "already settled", "transaction is settled"
+    blob.includes('not voidable') ||
+    blob.includes('cannot be voided') ||
+    blob.includes('use refund') ||
+    blob.includes('already refunded')
+  );
+}
+
+// Mirror of voidSucceeded for the refund response (refund uses is_refund, like void's
+// is_void). NOTE: the refund BRANCH is unverified on the current test account — it is
+// "Pending Onboarding" with eligible_for_manual_refunds=false and never settles, so no
+// settled transaction could be produced to exercise it. Control flow is still correct:
+// refund is only attempted when void did not succeed, and a rejected refund throws
+// (payment_status stays PAID) rather than being mistaken for success.
+function refundSucceeded(res: RawResponse): boolean {
+  const b = res.body ?? {};
+  return res.ok && (b.success === true || b.success === 'true' || b.is_refund === true);
+}
+
+export interface ReversePaymobArgs {
+  apiKey?: string;
+  transactionId: string;   // Paymob transaction id = our Order.payment_ref
+  amountCents: number;     // full order total, piastres (refund needs an amount)
+  orderId: string;         // for logging/correlation
+  venueId: string;
+  log: PaymobLogger;
+}
+
+export interface ReversePaymobResult {
+  mode: ReversalMode;
+  reversalId: string;
+}
+
+// Orchestrate auth → void → (if settled) refund. On success, the reversal id is
+// LOGGED IMMEDIATELY (before the caller writes the DB) so a successful Paymob call
+// is never unrecoverable if the follow-up DB write fails. Throws PaymobReversalError
+// only when BOTH void and refund fail — the caller then leaves the order flagged.
+export async function reversePaymobTransaction(args: ReversePaymobArgs): Promise<ReversePaymobResult> {
+  const { apiKey, transactionId, amountCents, orderId, venueId, log } = args;
+  if (!apiKey) {
+    throw new PaymobReversalError('paymob_reversal_not_configured', { reason: 'missing_api_key' });
+  }
+
+  const token = await getReversalAuthToken(apiKey);
+
+  const txn = coerceTxnId(transactionId);
+
+  // --- Attempt VOID first ---
+  const voidRes = await postJson(`${PAYMOB_API_BASE}/api/acceptance/void_refund/void`, {
+    auth_token: token,
+    transaction_id: txn,
+  });
+
+  if (voidSucceeded(voidRes)) {
+    const reversalId = extractReversalId(voidRes.body) ?? transactionId;
+    // Log the id the instant Paymob confirms — before any DB write.
+    log.info({ event: 'paymob_reversal_ok', order_id: orderId, venue_id: venueId, mode: 'void', reversal_id: reversalId });
+    return { mode: 'void', reversalId };
+  }
+
+  log.warn({
+    event: 'paymob_void_not_applied',
+    order_id: orderId,
+    settled_signal: voidIndicatesSettled(voidRes),
+    void_status: voidRes.status,
+  });
+
+  // --- Void didn't apply (settled, or otherwise). Fall back to REFUND. ---
+  const refundRes = await postJson(`${PAYMOB_API_BASE}/api/acceptance/void_refund/refund`, {
+    auth_token: token,
+    transaction_id: txn,
+    amount_cents: amountCents,
+  });
+
+  if (refundSucceeded(refundRes)) {
+    const reversalId = extractReversalId(refundRes.body) ?? transactionId;
+    log.info({ event: 'paymob_reversal_ok', order_id: orderId, venue_id: venueId, mode: 'refund', reversal_id: reversalId });
+    return { mode: 'refund', reversalId };
+  }
+
+  // --- Both failed: do NOT flip payment_status. Surface for manual retry. ---
+  log.error({
+    event: 'paymob_reversal_failed',
+    order_id: orderId,
+    venue_id: venueId,
+    void_status: voidRes.status,
+    refund_status: refundRes.status,
+  });
+  throw new PaymobReversalError('paymob_reversal_failed', {
+    void: voidRes,
+    refund: refundRes,
+  });
 }

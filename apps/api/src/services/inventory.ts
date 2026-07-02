@@ -83,6 +83,52 @@ export async function commitStock(tx: Tx, venueId: string, items: InventoryItem[
   }
 }
 
+// Restock COMMITTED stock — the inverse of commitStock's stock_count decrement.
+// Used when a paid/committed order is reversed or staff-cancelled (5.7: "a cancelled
+// paid order restocks", stock_count += qty). reserved_count was already released at
+// commit time, so we ONLY add back stock_count here (never touch reserved_count).
+// Re-enables availability symmetrically with releaseReservation's B2 logic: flip
+// `available` back on when effective stock rises back above the venue's buffer.
+// Must be called inside a $transaction that holds the order row lock. Only meaningful
+// for finite-stock items — unlimited (stock_count = null) items have nothing to restock.
+export async function restockCommitted(tx: Tx, venueId: string, items: InventoryItem[]): Promise<void> {
+  const venueRows = await tx.$queryRaw<Array<{ stock_buffer: number }>>`
+    SELECT stock_buffer FROM "Venue" WHERE id = ${venueId}
+  `;
+  const stockBuffer = venueRows[0]?.stock_buffer ?? 0;
+
+  for (const { sku, qty } of sorted(items)) {
+    const rows = await tx.$queryRaw<Array<{
+      id: string;
+      stock_count: number | null;
+      reserved_count: number;
+      available: boolean;
+    }>>`
+      SELECT id, stock_count, reserved_count, available
+      FROM "MenuItem"
+      WHERE venue_id = ${venueId} AND sku = ${sku}
+      FOR UPDATE
+    `;
+
+    if (rows.length === 0) continue; // item may have been deleted; skip gracefully
+    const row = rows[0];
+
+    // Unlimited-stock items were never decremented; nothing to give back.
+    if (row.stock_count === null) continue;
+
+    const newStock = row.stock_count + qty;
+    const shouldReEnable = !row.available && newStock - row.reserved_count > stockBuffer;
+
+    await tx.menuItem.update({
+      where: { id: row.id },
+      data: {
+        stock_count: { increment: qty },
+        ...(shouldReEnable ? { available: true } : {}),
+      },
+    });
+  }
+}
+
 // Release a reservation without decrementing stock_count.
 // Used for CANCELLED and EXPIRED orders. Must be called inside a $transaction.
 // Safe to call exactly once per order (caller must hold the order row lock and verify

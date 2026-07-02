@@ -6,3 +6,7 @@ dist/
 *.env
 !.env.example
 .turbo/
+
+# curl cookie jars from local endpoint testing
+staff.txt
+admin.txt
