@@ -1,11 +1,21 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { prisma } from '../lib/db.js';
-import { redis } from '../lib/redis.js';
+import { redis, checkRateLimit } from '../lib/redis.js';
 import { requireAuth, requireVenueMatch } from '../middleware/auth.js';
 import { releaseReservation, restockCommitted } from '../services/inventory.js';
 import { reverseOrderPayment, PaymobReversalError } from '../services/refunds.js';
 import { emitOrderById, onOrderEvent, ORDER_ADMIN_SELECT } from '../lib/order-events.js';
 import { startOfDayUTC } from '../lib/timezone.js';
+import {
+  presignPutObject,
+  headObject,
+  deleteObject,
+  publicUrlForKey,
+  keyFromPublicUrl,
+  CONTENT_TYPE_EXT,
+  MAX_IMAGE_BYTES,
+} from '../lib/r2.js';
 
 interface ToggleParams {
   id: string;   // venue id — venue-scoped (requireVenueMatch enforces it matches the staff token)
@@ -413,6 +423,211 @@ export async function adminRoutes(fastify: FastifyInstance) {
         if (e.statusCode === 409) return reply.status(409).send({ error: e.message });
         throw err;
       }
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // Menu item image upload (Section 12 / Phase 2 item 4) — presign + confirm.
+  // ---------------------------------------------------------------------------
+
+  interface ItemImageParams {
+    id: string;   // venue id — venue-scoped
+    sku: string;
+  }
+
+  const itemImageParamsSchema = {
+    type: 'object',
+    required: ['id', 'sku'],
+    properties: {
+      id: { type: 'string', minLength: 1 },
+      sku: { type: 'string', minLength: 1 },
+    },
+  } as const;
+
+  const ALLOWED_IMAGE_TYPES = new Set(Object.keys(CONTENT_TYPE_EXT));
+
+  // Per-user cap on the presign route specifically (stricter than the general
+  // /admin/* surface — see lib/redis.ts checkRateLimit note on why this isn't
+  // wired through @fastify/rate-limit).
+  async function presignRateLimit(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const userId = request.user!.sub;
+    const { allowed, retryAfter } = await checkRateLimit(`ratelimit:image_presign:${userId}`, 15, 60);
+    if (!allowed) {
+      reply.header('Retry-After', String(retryAfter));
+      return reply.status(429).send({ error: 'rate_limit_exceeded', retry_after: retryAfter });
+    }
+  }
+
+  interface ImagePresignBody {
+    content_type: string;
+    content_length: number;
+  }
+
+  // POST /admin/venues/:id/items/:sku/image/presign — issue a presigned R2 PUT URL.
+  // Writes nothing to the database; the object may never actually get uploaded.
+  fastify.post<{ Params: ItemImageParams; Body: ImagePresignBody }>(
+    '/admin/venues/:id/items/:sku/image/presign',
+    {
+      preHandler: [requireAuth, requireVenueMatch('id'), presignRateLimit],
+      schema: {
+        params: itemImageParamsSchema,
+        body: {
+          type: 'object',
+          required: ['content_type', 'content_length'],
+          properties: {
+            content_type: { type: 'string' },
+            content_length: { type: 'integer', minimum: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id: venueId, sku } = request.params;
+      const { content_type, content_length } = request.body;
+
+      const ext = CONTENT_TYPE_EXT[content_type];
+      if (!ALLOWED_IMAGE_TYPES.has(content_type) || !ext) {
+        return reply.status(400).send({
+          error: 'unsupported_content_type',
+          message: 'Only image/jpeg, image/png, image/webp are accepted',
+        });
+      }
+      if (content_length > MAX_IMAGE_BYTES) {
+        return reply.status(400).send({ error: 'file_too_large', message: `Max ${MAX_IMAGE_BYTES} bytes` });
+      }
+
+      const item = await prisma.menuItem.findFirst({
+        where: { venue_id: venueId, sku },
+        select: { id: true },
+      });
+      if (!item) return reply.status(404).send({ error: 'item_not_found' });
+
+      // venues/<venueId>/items/<sku>/<uuid>.<ext> — the venue-id prefix is what
+      // makes cross-venue writes structurally impossible, enforced again at confirm.
+      const key = `venues/${venueId}/items/${sku}/${randomUUID()}.${ext}`;
+
+      let uploadUrl: string;
+      try {
+        uploadUrl = await presignPutObject(key, content_type, content_length);
+      } catch (err) {
+        fastify.log.error({ event: 'image_presign_failed', venue_id: venueId, sku, error: String(err) });
+        return reply.status(500).send({
+          error: 'r2_not_configured',
+          message: 'R2 credentials are missing from the API server environment',
+        });
+      }
+
+      fastify.log.info({
+        event: 'image_presign_issued',
+        venue_id: venueId,
+        sku,
+        key,
+        content_type,
+        content_length,
+      });
+
+      return reply.send({ upload_url: uploadUrl, key, public_url: publicUrlForKey(key) });
+    },
+  );
+
+  interface ImageConfirmBody {
+    key: string;
+  }
+
+  // POST /admin/venues/:id/items/:sku/image/confirm — verify the object actually
+  // exists in R2, then persist menu_items.image_url and invalidate the venue cache.
+  fastify.post<{ Params: ItemImageParams; Body: ImageConfirmBody }>(
+    '/admin/venues/:id/items/:sku/image/confirm',
+    {
+      preHandler: [requireAuth, requireVenueMatch('id')],
+      schema: {
+        params: itemImageParamsSchema,
+        body: {
+          type: 'object',
+          required: ['key'],
+          properties: { key: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id: venueId, sku } = request.params;
+      const { key } = request.body;
+
+      // Never trust a client-supplied key blindly — it must live under THIS
+      // venue's and THIS item's own prefix.
+      const expectedPrefix = `venues/${venueId}/items/${sku}/`;
+      if (!key.startsWith(expectedPrefix)) {
+        fastify.log.warn({ event: 'image_confirm_key_mismatch', venue_id: venueId, sku, key });
+        return reply.status(403).send({ error: 'key_prefix_mismatch' });
+      }
+
+      const item = await prisma.menuItem.findFirst({
+        where: { venue_id: venueId, sku },
+        select: { id: true, image_url: true, venue: { select: { slug: true } } },
+      });
+      if (!item) return reply.status(404).send({ error: 'item_not_found' });
+
+      let head: { contentLength: number; contentType: string | null } | null;
+      try {
+        head = await headObject(key);
+      } catch (err) {
+        fastify.log.error({ event: 'image_confirm_head_failed', venue_id: venueId, sku, key, error: String(err) });
+        return reply.status(500).send({ error: 'r2_error' });
+      }
+      if (!head) {
+        // Upload never landed (failed PUT, wrong bucket, etc.) — persist nothing.
+        return reply.status(409).send({ error: 'object_not_found', message: 'Upload was not found in R2 — retry the upload' });
+      }
+
+      // Backstop size check: the presign step already binds ContentLength into the
+      // signature (see lib/r2.ts), so this should only trip on a tampered/unusual
+      // client. Delete the oversized object and reject rather than persist it.
+      if (head.contentLength > MAX_IMAGE_BYTES) {
+        await deleteObject(key).catch((err) => {
+          fastify.log.warn({ event: 'image_oversize_cleanup_failed', venue_id: venueId, sku, key, error: String(err) });
+        });
+        return reply.status(413).send({ error: 'file_too_large' });
+      }
+
+      // Real content-type enforcement point: S3/R2 presigned PUT URLs cannot bind
+      // Content-Type into the signature (the AWS SDK hardcodes it as unsignable —
+      // see lib/r2.ts), so a PUT could have stored the object under ANY declared
+      // type regardless of what was requested at presign time. Check what actually
+      // landed and reject anything outside the allowed image types before ever
+      // persisting a URL to it.
+      if (!head.contentType || !ALLOWED_IMAGE_TYPES.has(head.contentType)) {
+        await deleteObject(key).catch((err) => {
+          fastify.log.warn({ event: 'image_bad_content_type_cleanup_failed', venue_id: venueId, sku, key, error: String(err) });
+        });
+        fastify.log.warn({ event: 'image_confirm_content_type_rejected', venue_id: venueId, sku, key, content_type: head.contentType });
+        return reply.status(415).send({ error: 'unexpected_content_type' });
+      }
+
+      const publicUrl = publicUrlForKey(key);
+      const previousUrl = item.image_url;
+
+      const updated = await prisma.menuItem.update({
+        where: { id: item.id },
+        data: { image_url: publicUrl },
+        select: { sku: true, image_url: true },
+      });
+
+      await redis.del(`venue:${item.venue.slug}`).catch(() => {});
+
+      fastify.log.info({ event: 'image_confirmed', venue_id: venueId, sku, key, public_url: publicUrl });
+
+      // Best-effort cleanup of the item's previous image, only if it lived under
+      // this item's own prefix — never delete something outside that namespace.
+      if (previousUrl && previousUrl !== publicUrl) {
+        const oldKey = keyFromPublicUrl(previousUrl);
+        if (oldKey && oldKey.startsWith(expectedPrefix)) {
+          deleteObject(oldKey).catch((err) => {
+            fastify.log.warn({ event: 'old_image_delete_failed', venue_id: venueId, sku, key: oldKey, error: String(err) });
+          });
+        }
+      }
+
+      return reply.send(updated);
     },
   );
 }

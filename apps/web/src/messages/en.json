@@ -67,7 +67,15 @@
       "mark_available": "Mark Available",
       "load_failed": "Failed to load menu",
       "toggle_failed": "Failed to update item",
-      "stock": "Stock"
+      "stock": "Stock",
+      "image": {
+        "upload": "Upload image",
+        "replace": "Replace image",
+        "uploading": "Uploading…",
+        "invalid_type": "Only JPEG, PNG, or WEBP images are allowed",
+        "too_large": "Image must be 5 MB or smaller",
+        "upload_failed": "Upload failed — please try again"
+      }
     },
     "status": {
       "CREATED": "Created",

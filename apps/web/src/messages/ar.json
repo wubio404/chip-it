@@ -67,7 +67,15 @@
       "mark_available": "تحديد كمتاح",
       "load_failed": "فشل تحميل القائمة",
       "toggle_failed": "فشل تحديث الصنف",
-      "stock": "المخزون"
+      "stock": "المخزون",
+      "image": {
+        "upload": "رفع صورة",
+        "replace": "استبدال الصورة",
+        "uploading": "جاري الرفع...",
+        "invalid_type": "يُسمح فقط بصور JPEG أو PNG أو WEBP",
+        "too_large": "يجب ألا يتجاوز حجم الصورة 5 ميجابايت",
+        "upload_failed": "فشل الرفع — حاول مرة أخرى"
+      }
     },
     "status": {
       "CREATED": "تم الإنشاء",
