@@ -277,6 +277,39 @@ export async function cancelOrderAdmin(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Menu item image upload (Section 12 / Phase 2 item 4)
+// ---------------------------------------------------------------------------
+
+export interface ImagePresignResult {
+  upload_url: string;
+  key: string;
+  public_url: string;
+}
+
+export async function presignItemImage(
+  venueId: string,
+  sku: string,
+  contentType: string,
+  contentLength: number,
+): Promise<ImagePresignResult> {
+  return apiFetch(`/admin/venues/${encodeURIComponent(venueId)}/items/${encodeURIComponent(sku)}/image/presign`, {
+    method: 'POST',
+    body: JSON.stringify({ content_type: contentType, content_length: contentLength }),
+  });
+}
+
+export async function confirmItemImage(
+  venueId: string,
+  sku: string,
+  key: string,
+): Promise<{ sku: string; image_url: string }> {
+  return apiFetch(`/admin/venues/${encodeURIComponent(venueId)}/items/${encodeURIComponent(sku)}/image/confirm`, {
+    method: 'POST',
+    body: JSON.stringify({ key }),
+  });
+}
+
 export async function collectOrderAdmin(
   venueId: string,
   orderId: string,

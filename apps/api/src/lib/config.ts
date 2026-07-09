@@ -42,4 +42,11 @@ export const config = {
   cookieDomain: process.env.COOKIE_DOMAIN ?? '',  // apex domain for cross-subdomain cookies; leave empty locally. PROD: otlobly.org (else app./api. can't share the auth cookie)
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:3001',  // allowed CORS origin
   guestEmail: process.env.PLATFORM_GUEST_EMAIL ?? 'guest@example.com',  // placeholder for Paymob billing_data
+  // Cloudflare R2 (S3-compatible) — menu image uploads (Section 12 / Phase 2 item 4).
+  // Not in REQUIRED: validated at request time in lib/r2.ts, same pattern as Paymob.
+  r2AccountId: process.env.R2_ACCOUNT_ID ?? '',
+  r2AccessKeyId: process.env.R2_ACCESS_KEY_ID ?? '',
+  r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY ?? '',
+  r2Bucket: process.env.R2_BUCKET ?? '',
+  r2PublicBaseUrl: process.env.R2_PUBLIC_BASE_URL ?? '',
 } as const;
