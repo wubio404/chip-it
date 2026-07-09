@@ -15,10 +15,15 @@ import {
   accessClearOptions,
   refreshClearOptions,
 } from '../lib/cookies.js';
+import { requireAuth } from '../middleware/auth.js';
 
 interface LoginBody {
   email: string;
   password: string;
+}
+
+interface MeQuery {
+  venue?: string; // venue slug from the /admin/[venue] URL — see /admin/me below
 }
 
 export async function authRoutes(fastify: FastifyInstance) {
@@ -103,4 +108,66 @@ export async function authRoutes(fastify: FastifyInstance) {
       .clearCookie(REFRESH_COOKIE, refreshClearOptions());
     return reply.send({ ok: true });
   });
+
+  // -------------------------------------------------------------------------
+  // GET /admin/me — auth context for the web layer's /admin/[venue] server
+  // component, which knows the venue SLUG from the URL but needs the venue ID
+  // (every other admin endpoint is keyed by ID) plus a value to confirm the
+  // logged-in staffer is allowed to view that slug.
+  //
+  //   VENUE_STAFF  — always resolves to THEIR OWN venue (from the token), never
+  //                  the caller-supplied slug. If a `venue` query is given and
+  //                  doesn't match, that's a staff member hitting another
+  //                  venue's admin URL — 403, not a silent redirect to their own.
+  //   PLATFORM_ADMIN — has no home venue (venue_id is null); the `venue` slug
+  //                  query is required to know which venue's panel they're
+  //                  viewing, and any existing venue may be resolved.
+  // -------------------------------------------------------------------------
+  fastify.get<{ Querystring: MeQuery }>(
+    '/admin/me',
+    { preHandler: [requireAuth] },
+    async (request, reply) => {
+      const user = request.user!;
+      const requestedSlug = request.query?.venue;
+
+      if (user.role === 'PLATFORM_ADMIN') {
+        if (!requestedSlug) {
+          return reply.status(400).send({ error: 'venue_query_required' });
+        }
+        const venue = await prisma.venue.findUnique({
+          where: { slug: requestedSlug },
+          select: { id: true, slug: true, name: true, default_locale: true },
+        });
+        if (!venue) return reply.status(404).send({ error: 'venue_not_found' });
+        return reply.send({
+          user: { id: user.sub, role: user.role, venue_id: null },
+          venue,
+        });
+      }
+
+      // VENUE_STAFF
+      if (!user.venue_id) {
+        // Corrupt/legacy token — a staff user must always carry a venue_id.
+        return reply.status(401).send({ error: 'unauthorized' });
+      }
+      const venue = await prisma.venue.findUnique({
+        where: { id: user.venue_id },
+        select: { id: true, slug: true, name: true, default_locale: true },
+      });
+      if (!venue) return reply.status(401).send({ error: 'unauthorized' });
+
+      if (requestedSlug && requestedSlug !== venue.slug) {
+        // Authenticated, just at the wrong venue's URL — include their own slug so
+        // the web layer can send them to their own panel instead of a login page
+        // for a venue they can't access (the 403 itself is correct; only the UX of
+        // where we redirect afterward should improve).
+        return reply.status(403).send({ error: 'forbidden', own_venue_slug: venue.slug });
+      }
+
+      return reply.send({
+        user: { id: user.sub, role: user.role, venue_id: user.venue_id },
+        venue,
+      });
+    },
+  );
 }

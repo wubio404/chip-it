@@ -7,6 +7,7 @@ import {
   type ReversalMode,
 } from '../lib/paymob.js';
 import { restockCommitted } from './inventory.js';
+import { emitOrderById } from '../lib/order-events.js';
 
 // ---------------------------------------------------------------------------
 // The reversal client — the SINGLE place that un-pays an order (Section 5.9).
@@ -66,7 +67,7 @@ interface OrderRow {
 export async function reverseOrderPayment(orderId: string, opts: ReverseOpts): Promise<ReverseOutcome> {
   const log = opts.log ?? consoleLogger;
 
-  return prisma.$transaction(
+  const outcome = await prisma.$transaction<ReverseOutcome>(
     async (tx) => {
       const rows = await tx.$queryRaw<OrderRow[]>`
         SELECT id, venue_id, status, payment_status, payment_method,
@@ -156,6 +157,12 @@ export async function reverseOrderPayment(orderId: string, opts: ReverseOpts): P
     // External HTTP happens inside — widen the default 5s interactive-tx timeout.
     { timeout: 25_000, maxWait: 8_000 },
   );
+
+  // Emit AFTER commit (never inside the tx). Only on an actual mutation — a
+  // not_found/not_paid/etc. outcome touched nothing, so there is nothing to emit.
+  if (outcome.ok) await emitOrderById(orderId);
+
+  return outcome;
 }
 
 export { PaymobReversalError };

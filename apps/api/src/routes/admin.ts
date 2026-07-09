@@ -4,10 +4,20 @@ import { redis } from '../lib/redis.js';
 import { requireAuth, requireVenueMatch } from '../middleware/auth.js';
 import { releaseReservation, restockCommitted } from '../services/inventory.js';
 import { reverseOrderPayment, PaymobReversalError } from '../services/refunds.js';
+import { emitOrderById, onOrderEvent, ORDER_ADMIN_SELECT } from '../lib/order-events.js';
+import { startOfDayUTC } from '../lib/timezone.js';
 
 interface ToggleParams {
   id: string;   // venue id — venue-scoped (requireVenueMatch enforces it matches the staff token)
   sku: string;
+}
+
+interface ToggleBody {
+  available?: boolean;
+}
+
+interface VenueIdParams {
+  id: string;
 }
 
 interface OrderActionParams {
@@ -32,8 +42,9 @@ function httpError(statusCode: number, message: string): Error {
 // venue; PLATFORM_ADMIN may touch any. The scoping is enforced by requireVenueMatch
 // server-side, independent of the URL the caller constructs.
 export async function adminRoutes(fastify: FastifyInstance) {
-  // POST /admin/venues/:id/items/:sku/toggle — flip item availability (5.7).
-  fastify.post<{ Params: ToggleParams }>(
+  // POST /admin/venues/:id/items/:sku/toggle — set or flip item availability (5.7).
+  // Body { available } is optional: if present, SET to that value; if absent, FLIP.
+  fastify.post<{ Params: ToggleParams; Body: ToggleBody }>(
     '/admin/venues/:id/items/:sku/toggle',
     {
       preHandler: [requireAuth, requireVenueMatch('id')],
@@ -46,11 +57,18 @@ export async function adminRoutes(fastify: FastifyInstance) {
             sku: { type: 'string', minLength: 1 },
           },
         },
+        body: {
+          type: 'object',
+          properties: { available: { type: 'boolean' } },
+        },
       },
     },
     async (request, reply) => {
       const { id: venueId, sku } = request.params;
+      const explicit = request.body?.available;
 
+      // WHERE includes venue_id AND sku — no cross-venue writes even if a staff
+      // token were somehow paired with another venue's sku.
       const item = await prisma.menuItem.findFirst({
         where: { venue_id: venueId, sku },
         select: { id: true, available: true, venue: { select: { slug: true } } },
@@ -59,9 +77,10 @@ export async function adminRoutes(fastify: FastifyInstance) {
         return reply.status(404).send({ error: 'item_not_found' });
       }
 
+      const nextAvailable = explicit ?? !item.available;
       const updated = await prisma.menuItem.update({
         where: { id: item.id },
-        data: { available: !item.available },
+        data: { available: nextAvailable },
         select: { sku: true, available: true },
       });
 
@@ -71,6 +90,111 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
       fastify.log.info({ event: 'admin_item_toggle', venue_id: venueId, sku, available: updated.available });
       return reply.send(updated);
+    },
+  );
+
+  const ORDER_TZ = 'Africa/Cairo';
+
+  // Shared by the JSON list endpoint and the SSE `snapshot` event — one query,
+  // one definition of "today" (Section 5.2 order list / this session's Part A.2).
+  async function getTodaysOrders(venueId: string) {
+    const since = startOfDayUTC(ORDER_TZ);
+    return prisma.order.findMany({
+      where: { venue_id: venueId, created_at: { gte: since } },
+      orderBy: { created_at: 'desc' },
+      select: ORDER_ADMIN_SELECT,
+    });
+  }
+
+  const orderResponseProps = {
+    id: { type: 'string' },
+    venue_id: { type: 'string' },
+    table_label: { type: 'string' },
+    customer_name: { type: ['string', 'null'] },
+    items: {},
+    total: { type: 'integer' },
+    status: { type: 'string' },
+    payment_method: { type: 'string' },
+    payment_status: { type: 'string' },
+    payment_ref: { type: ['string', 'null'] },
+    created_at: { type: 'string' },
+    updated_at: { type: 'string' },
+    paid_at: { type: ['string', 'null'] },
+  } as const;
+
+  // GET /admin/venues/:id/orders — today's orders (venue-local day, Africa/Cairo).
+  fastify.get<{ Params: VenueIdParams }>(
+    '/admin/venues/:id/orders',
+    {
+      preHandler: [requireAuth, requireVenueMatch('id')],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string', minLength: 1 } },
+        },
+        response: {
+          200: { type: 'array', items: { type: 'object', properties: orderResponseProps } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const orders = await getTodaysOrders(request.params.id);
+      return reply.send(orders);
+    },
+  );
+
+  // GET /admin/venues/:id/orders/stream — SSE live order feed (in-process only;
+  // Redis pub/sub is the §8 scale-out replacement, not built in this session).
+  fastify.get<{ Params: VenueIdParams }>(
+    '/admin/venues/:id/orders/stream',
+    { preHandler: [requireAuth, requireVenueMatch('id')] },
+    async (request, reply) => {
+      const venueId = request.params.id;
+
+      // reply.raw.writeHead() below bypasses Fastify's own header queue entirely —
+      // including whatever @fastify/cors's onRequest hook already set via reply.header()
+      // (access-control-allow-origin, -credentials, Vary). Merge those in explicitly so
+      // this route isn't silently CORS-broken relative to every other endpoint.
+      reply.raw.writeHead(200, {
+        ...(reply.getHeaders() as Record<string, string | number | string[]>),
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+      reply.hijack();
+      // Nagle's algorithm can hold small writes on a persistent connection waiting
+      // to coalesce them — noticeable as multi-hundred-ms lag on a low-traffic SSE
+      // stream where each event is its own small chunk. Disable it for this socket.
+      reply.raw.socket?.setNoDelay(true);
+
+      const send = (event: string, data: unknown) => {
+        reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+
+      fastify.log.info({ event: 'admin_sse_connect', venue_id: venueId });
+
+      try {
+        send('snapshot', await getTodaysOrders(venueId));
+      } catch (err) {
+        fastify.log.error({ event: 'admin_sse_snapshot_failed', venue_id: venueId, error: String(err) });
+      }
+
+      const unsubscribe = onOrderEvent((order) => {
+        if (order.venue_id === venueId) send('order', order);
+      });
+
+      // Comment ping every 25s — keeps intermediary proxies (Nginx et al) from
+      // timing out the idle connection.
+      const keepAlive = setInterval(() => {
+        reply.raw.write(':\n\n');
+      }, 25_000);
+
+      request.raw.on('close', () => {
+        clearInterval(keepAlive);
+        unsubscribe();
+        fastify.log.info({ event: 'admin_sse_disconnect', venue_id: venueId });
+      });
     },
   );
 
@@ -84,7 +208,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
   // WITHOUT any Paymob call. Locked + re-validated to guard against races with the
   // webhook. Paid-online orders never reach here — they go through reverseOrderPayment.
   async function cancelWithoutReversal(orderId: string, reason: string | null) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const rows = await tx.$queryRaw<Array<{
         venue_id: string;
         status: string;
@@ -116,6 +240,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
       }
       return { venue_id: o.venue_id, payment_status: o.payment_status };
     });
+    await emitOrderById(orderId);
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -278,6 +404,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
           });
         });
 
+        await emitOrderById(orderId);
         fastify.log.info({ event: 'cash_collected', order_id: orderId, venue_id: venueId });
         return reply.send({ ok: true, payment_status: 'PAID' });
       } catch (err: unknown) {

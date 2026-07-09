@@ -29,5 +29,68 @@
     "cancel_btn": "إلغاء الطلب",
     "cancelling": "جاري الإلغاء...",
     "conn_error": "مشكلة في الاتصال — جاري إعادة المحاولة"
+  },
+  "admin": {
+    "login": {
+      "title": "دخول الموظفين",
+      "email": "البريد الإلكتروني",
+      "password": "كلمة المرور",
+      "submit": "دخول",
+      "submitting": "جاري الدخول...",
+      "invalid": "البريد الإلكتروني أو كلمة المرور غير صحيحة",
+      "error": "حدث خطأ، حاول مرة أخرى"
+    },
+    "logout": "تسجيل الخروج",
+    "access_denied": "ليس لديك صلاحية الوصول إلى \"{venue}\" — يتم عرض فرعك الآن",
+    "tabs": {
+      "orders": "الطلبات",
+      "menu": "القائمة"
+    },
+    "feed": {
+      "live": "مباشر",
+      "connecting": "جاري الاتصال...",
+      "disconnected": "التحديث المباشر متوقف (البيانات لا تزال تتحدث تلقائيًا)",
+      "retry": "إعادة المحاولة"
+    },
+    "orders": {
+      "empty": "لا توجد طلبات اليوم بعد",
+      "cancel": "إلغاء",
+      "cancelling": "جاري الإلغاء...",
+      "confirm_cancel": "سيتم استرداد المبلغ للعميل إذا كان قد دفع بالفعل. متابعة؟",
+      "cancel_success": "تم إلغاء الطلب",
+      "mark_collected": "تم التحصيل",
+      "collecting": "جاري التحديث...",
+      "collect_success": "تم تسجيل التحصيل"
+    },
+    "menu": {
+      "sold_out": "تحديد كنافذ",
+      "mark_available": "تحديد كمتاح",
+      "load_failed": "فشل تحميل القائمة",
+      "toggle_failed": "فشل تحديث الصنف",
+      "stock": "المخزون"
+    },
+    "status": {
+      "CREATED": "تم الإنشاء",
+      "PAYMENT_PENDING": "بانتظار الدفع",
+      "CONFIRMED": "تم التأكيد",
+      "ROUTING": "جاري التوجيه",
+      "INJECTED": "تم الإرسال للنظام",
+      "PRINTED": "تم الطباعة",
+      "FULFILLED": "تم التسليم",
+      "CANCELLED": "ملغي",
+      "FAILED": "فشل",
+      "EXPIRED": "منتهي"
+    },
+    "payment_method": {
+      "CARD": "بطاقة",
+      "APPLE_PAY": "Apple Pay",
+      "CASH": "كاش"
+    },
+    "payment_status": {
+      "UNPAID": "غير مدفوع",
+      "PAID": "مدفوع",
+      "REFUNDED": "تم الاسترداد",
+      "VOIDED": "ملغى"
+    }
   }
 }

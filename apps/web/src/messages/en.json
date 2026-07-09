@@ -29,5 +29,68 @@
     "cancel_btn": "Cancel Order",
     "cancelling": "Cancelling...",
     "conn_error": "Connection issue — retrying..."
+  },
+  "admin": {
+    "login": {
+      "title": "Staff Login",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Log In",
+      "submitting": "Logging in...",
+      "invalid": "Invalid email or password",
+      "error": "Something went wrong, please try again"
+    },
+    "logout": "Log out",
+    "access_denied": "You don't have access to \"{venue}\" — showing your own venue instead",
+    "tabs": {
+      "orders": "Orders",
+      "menu": "Menu"
+    },
+    "feed": {
+      "live": "Live",
+      "connecting": "Connecting...",
+      "disconnected": "Live updates paused (data still refreshes automatically)",
+      "retry": "Retry"
+    },
+    "orders": {
+      "empty": "No orders yet today",
+      "cancel": "Cancel",
+      "cancelling": "Cancelling...",
+      "confirm_cancel": "This refunds the customer if already paid. Continue?",
+      "cancel_success": "Order cancelled",
+      "mark_collected": "Mark Collected",
+      "collecting": "Marking...",
+      "collect_success": "Marked as collected"
+    },
+    "menu": {
+      "sold_out": "Mark Sold Out",
+      "mark_available": "Mark Available",
+      "load_failed": "Failed to load menu",
+      "toggle_failed": "Failed to update item",
+      "stock": "Stock"
+    },
+    "status": {
+      "CREATED": "Created",
+      "PAYMENT_PENDING": "Payment Pending",
+      "CONFIRMED": "Confirmed",
+      "ROUTING": "Routing",
+      "INJECTED": "Injected",
+      "PRINTED": "Printed",
+      "FULFILLED": "Fulfilled",
+      "CANCELLED": "Cancelled",
+      "FAILED": "Failed",
+      "EXPIRED": "Expired"
+    },
+    "payment_method": {
+      "CARD": "Card",
+      "APPLE_PAY": "Apple Pay",
+      "CASH": "Cash"
+    },
+    "payment_status": {
+      "UNPAID": "Unpaid",
+      "PAID": "Paid",
+      "REFUNDED": "Refunded",
+      "VOIDED": "Voided"
+    }
   }
 }

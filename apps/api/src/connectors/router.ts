@@ -2,6 +2,7 @@ import type { CanonicalOrder, ConnectorResult, PosConnector } from '@taporder/ty
 import { prisma } from '../lib/db.js';
 import { printAgentConnector } from './print-agent.js';
 import { reverseOrderPayment, PaymobReversalError } from '../services/refunds.js';
+import { emitOrderById } from '../lib/order-events.js';
 
 function buildChain(posType: string): PosConnector[] {
   switch (posType) {
@@ -22,6 +23,7 @@ export async function routeOrder(order: CanonicalOrder, venueId: string, posType
     where: { id: order.id },
     data: { status: 'ROUTING' },
   });
+  await emitOrderById(order.id);
 
   console.log(JSON.stringify({ level: 'info', event: 'order_routing_start', order_id: order.id, venue_id: venueId }));
 
@@ -52,6 +54,7 @@ export async function routeOrder(order: CanonicalOrder, venueId: string, posType
         where: { id: order.id },
         data: { status: nextStatus, routing_tier: result.tier, pos_ref: result.pos_ref ?? null },
       });
+      await emitOrderById(order.id);
       console.log(JSON.stringify({ level: 'info', event: 'order_routed', order_id: order.id, tier: result.tier, status: nextStatus }));
       return;
     }
@@ -62,6 +65,7 @@ export async function routeOrder(order: CanonicalOrder, venueId: string, posType
         where: { id: order.id },
         data: { status: 'CONFIRMED', routing_tier: 'offline' },
       });
+      await emitOrderById(order.id);
       console.error(JSON.stringify({ level: 'warn', event: 'order_routing_offline', order_id: order.id, venue_id: venueId }));
       return;
     }
@@ -74,6 +78,7 @@ export async function routeOrder(order: CanonicalOrder, venueId: string, posType
     where: { id: order.id },
     data: { status: 'FAILED', routing_tier: null },
   });
+  await emitOrderById(order.id);
   // Alert immediately (5.4 / 15). Sentry/Slack wiring is a later phase; this is the hook.
   console.error(JSON.stringify({ level: 'error', event: 'all_connectors_failed', order_id: order.id, venue_id: venueId }));
 
