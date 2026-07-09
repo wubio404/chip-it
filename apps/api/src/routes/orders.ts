@@ -4,6 +4,7 @@ import { config } from '../lib/config.js';
 import { reserveStock, commitStock, releaseReservation } from '../services/inventory.js';
 import { routeOrder } from '../connectors/router.js';
 import { getPaymobConfig, createIntention, buildCheckoutUrl } from '../lib/paymob.js';
+import { emitOrderById } from '../lib/order-events.js';
 import type { CanonicalOrder } from '@taporder/types';
 
 interface CreateOrderBody {
@@ -160,6 +161,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
         }
 
         fastify.log.info({ event: 'order_created', order_id: created.id, venue_id: venue.id, table: table.label, status: 'CREATED', payment_method });
+        await emitOrderById(created.id);
 
         // 2. Create the Paymob intention. amount + items[].amount are piastres;
         //    sum(items.amount * quantity) must equal amount (Paymob rejects a mismatch).
@@ -204,6 +206,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
               await releaseReservation(tx, o.venue_id, its.map((i) => ({ sku: i.sku, qty: i.qty })));
               await tx.order.update({ where: { id: created.id }, data: { status: 'EXPIRED' } });
             });
+            await emitOrderById(created.id);
           } catch (cErr) {
             fastify.log.error({ event: 'paymob_intention_compensation_failed', order_id: created.id, error: String(cErr) });
           }
@@ -213,6 +216,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
         // 3. Move to PAYMENT_PENDING — checkout shown, awaiting payment (5.2).
         await prisma.order.update({ where: { id: created.id }, data: { status: 'PAYMENT_PENDING' } });
         fastify.log.info({ event: 'order_payment_pending', order_id: created.id, venue_id: venue.id, status: 'PAYMENT_PENDING' });
+        await emitOrderById(created.id);
 
         return reply.status(201).send({ order_id: created.id, checkout_url: checkoutUrl });
       }
@@ -264,6 +268,8 @@ export async function orderRoutes(fastify: FastifyInstance) {
         if (e.message === 'insufficient_stock') return reply.status(422).send({ error: 'insufficient_stock', sku: e.sku, available: e.available });
         throw err;
       }
+
+      await emitOrderById(order.id);
 
       // 5. Route outside the transaction — routing can be slow and its failure is non-fatal
       const canonical: CanonicalOrder = {
@@ -373,6 +379,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
         });
 
         fastify.log.info({ event: 'order_cancelled', order_id: id });
+        await emitOrderById(id);
         return reply.send({ ok: true });
       } catch (err: unknown) {
         const e = err as Error & { statusCode?: number };
@@ -427,6 +434,7 @@ export async function expireStaleOrders(): Promise<void> {
         });
       });
 
+      await emitOrderById(id);
       console.log(JSON.stringify({ level: 'info', event: 'order_expired', order_id: id }));
     } catch (err) {
       console.error(JSON.stringify({ level: 'error', event: 'order_expiry_error', order_id: id, error: String(err) }));

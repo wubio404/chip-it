@@ -3,6 +3,7 @@ import { prisma } from '../lib/db.js';
 import { commitStock } from '../services/inventory.js';
 import { routeOrder } from '../connectors/router.js';
 import { getPaymobConfig, verifyPaymobHmac } from '../lib/paymob.js';
+import { emitOrderById } from '../lib/order-events.js';
 import type { CanonicalOrder } from '@taporder/types';
 
 interface PaymobWebhookQuery {
@@ -183,6 +184,10 @@ export async function webhookRoutes(fastify: FastifyInstance) {
         // Confirmation failed before commit — return 500 so Paymob retries.
         return reply.status(500).send({ error: 'confirm_failed' });
       }
+
+      // Emit after commit regardless of branch — the paid_after_cancel path also
+      // mutated payment_status even though it didn't confirm/route.
+      await emitOrderById(order.id);
 
       if (!shouldRoute) {
         return reply.status(200).send({ ok: true });
