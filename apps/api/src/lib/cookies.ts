@@ -22,9 +22,14 @@ import { ACCESS_TTL_SECONDS, REFRESH_TTL_SECONDS } from './jwt.js';
 export const ACCESS_COOKIE = 'access_token';
 export const REFRESH_COOKIE = 'refresh_token';
 
-// The refresh cookie is scoped to /auth so it is only ever transmitted to the
-// refresh/logout endpoints, not on every ordinary API call.
-const REFRESH_PATH = '/auth';
+// NOTE: the refresh cookie was originally scoped to Path=/auth so it would only
+// ever be transmitted to the refresh/logout endpoints. That breaks through the
+// web app's same-origin client proxy (CLIENT_PROXY = '/api-proxy' in
+// apps/web/src/lib/api.ts): the browser's actual request path for a refresh call
+// is /api-proxy/auth/refresh, which does not start with the literal prefix
+// /auth, so per RFC 6265 the Path-scoped cookie is never attached and refresh
+// always 401s. The cookie is now scoped to Path=/ (same as the access cookie)
+// and relies on httpOnly + SameSite + Secure for protection instead.
 
 function base(): CookieSerializeOptions {
   return {
@@ -41,7 +46,7 @@ export function accessCookieOptions(): CookieSerializeOptions {
 }
 
 export function refreshCookieOptions(): CookieSerializeOptions {
-  return { ...base(), path: REFRESH_PATH, maxAge: REFRESH_TTL_SECONDS };
+  return { ...base(), maxAge: REFRESH_TTL_SECONDS };
 }
 
 // clearCookie must be called with the SAME path/domain the cookie was set with,

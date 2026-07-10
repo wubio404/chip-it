@@ -310,6 +310,72 @@ export async function confirmItemImage(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Platform admin dashboard (Phase 2 item 5) — read-only, cross-venue.
+// ---------------------------------------------------------------------------
+
+export interface PlatformMeResponse {
+  user: AdminUser;
+  venue: AdminVenue | null; // null when checked with no `venue` query (dashboard identity check)
+}
+
+/**
+ * Server-component-only, like fetchAdminMeServer, but venue-agnostic: calls
+ * /admin/me with no `venue` query, which for a PLATFORM_ADMIN returns
+ * `venue: null` instead of the venue-scoped 400. Used by /dashboard to check
+ * "is this a platform admin?" without needing a venue slug up front.
+ */
+export async function fetchPlatformMeServer(cookieHeader: string): Promise<
+  { ok: true; me: PlatformMeResponse } | { ok: false; status: number }
+> {
+  const res = await fetch(`${SERVER_API}/admin/me`, {
+    headers: { Cookie: cookieHeader },
+    cache: 'no-store',
+  });
+  if (!res.ok) return { ok: false, status: res.status };
+  return { ok: true, me: (await res.json()) as PlatformMeResponse };
+}
+
+export interface PlatformVenueAgent {
+  status: 'ONLINE' | 'OFFLINE' | 'DEGRADED';
+  last_heartbeat: string | null;
+}
+
+export interface PlatformVenue {
+  id: string;
+  slug: string;
+  name: string;
+  active: boolean;
+  pos_type: string;
+  created_at: string;
+  orders_total: number;
+  orders_today: number;
+  revenue_today: number; // integer piastres
+  agent: PlatformVenueAgent | null; // null = no Agent row ("no agent")
+}
+
+export type OrderStatusName =
+  | 'CREATED' | 'PAYMENT_PENDING' | 'CONFIRMED' | 'ROUTING' | 'INJECTED'
+  | 'PRINTED' | 'FULFILLED' | 'CANCELLED' | 'FAILED' | 'EXPIRED';
+
+export interface PlatformSummary {
+  venues_total: number;
+  venues_active: number;
+  orders_today: number;
+  revenue_today: number; // integer piastres
+  orders_today_by_status: Record<OrderStatusName, number>;
+}
+
+/** Called from the client-side dashboard — goes through /api-proxy. */
+export async function fetchPlatformVenues(): Promise<{ venues: PlatformVenue[] }> {
+  return apiFetch('/platform/venues');
+}
+
+/** Called from the client-side dashboard — goes through /api-proxy. */
+export async function fetchPlatformSummary(): Promise<PlatformSummary> {
+  return apiFetch('/platform/summary');
+}
+
 export async function collectOrderAdmin(
   venueId: string,
   orderId: string,

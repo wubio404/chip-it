@@ -119,9 +119,12 @@ export async function authRoutes(fastify: FastifyInstance) {
   //                  the caller-supplied slug. If a `venue` query is given and
   //                  doesn't match, that's a staff member hitting another
   //                  venue's admin URL — 403, not a silent redirect to their own.
-  //   PLATFORM_ADMIN — has no home venue (venue_id is null); the `venue` slug
-  //                  query is required to know which venue's panel they're
-  //                  viewing, and any existing venue may be resolved.
+  //   PLATFORM_ADMIN — has no home venue (venue_id is null). If a `venue` slug
+  //                  query is given, that venue is resolved (venue-scoped panel
+  //                  use, unchanged). If omitted, this is a venue-agnostic
+  //                  identity check (e.g. the platform dashboard, Phase 2 item 5)
+  //                  — respond 200 with `venue: null` rather than 400, since the
+  //                  caller only needs to confirm role, not load a venue.
   // -------------------------------------------------------------------------
   fastify.get<{ Querystring: MeQuery }>(
     '/admin/me',
@@ -132,7 +135,7 @@ export async function authRoutes(fastify: FastifyInstance) {
 
       if (user.role === 'PLATFORM_ADMIN') {
         if (!requestedSlug) {
-          return reply.status(400).send({ error: 'venue_query_required' });
+          return reply.send({ user: { id: user.sub, role: user.role, venue_id: null }, venue: null });
         }
         const venue = await prisma.venue.findUnique({
           where: { slug: requestedSlug },
