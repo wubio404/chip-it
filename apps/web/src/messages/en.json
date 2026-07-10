@@ -100,5 +100,51 @@
       "REFUNDED": "Refunded",
       "VOIDED": "Voided"
     }
+  },
+  "dashboard": {
+    "login": {
+      "title": "Platform Admin Login",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Log In",
+      "submitting": "Logging in...",
+      "invalid": "Invalid email or password",
+      "error": "Something went wrong, please try again"
+    },
+    "logout": "Log out",
+    "title": "Platform Dashboard",
+    "load_failed": "Failed to load dashboard data",
+    "forbidden": {
+      "title": "Not Authorized",
+      "message": "This account doesn't have platform admin access."
+    },
+    "summary": {
+      "venues_total": "Venues",
+      "venues_active": "Active Venues",
+      "orders_today": "Orders Today",
+      "revenue_today": "Revenue Today",
+      "by_status": "Today by Status"
+    },
+    "venues": {
+      "title": "Venues",
+      "empty": "No venues yet",
+      "columns": {
+        "name": "Venue",
+        "active": "Active",
+        "pos_type": "POS",
+        "orders_total": "Total Orders",
+        "orders_today": "Orders Today",
+        "revenue_today": "Revenue Today",
+        "agent": "Agent"
+      },
+      "active_yes": "Active",
+      "active_no": "Inactive"
+    },
+    "agent": {
+      "ONLINE": "Online",
+      "OFFLINE": "Offline",
+      "DEGRADED": "Degraded",
+      "none": "No agent"
+    }
   }
 }
