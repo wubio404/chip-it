@@ -5,10 +5,12 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
+import rateLimit from '@fastify/rate-limit';
 import cron from 'node-cron';
 import { config } from './lib/config.js';
 import { prisma } from './lib/db.js';
 import { redis } from './lib/redis.js';
+import { buildRateLimitOptions } from './lib/rate-limit.js';
 import { healthRoutes } from './routes/health.js';
 import { venueRoutes } from './routes/venues.js';
 import { orderRoutes, expireStaleOrders } from './routes/orders.js';
@@ -18,10 +20,18 @@ import { authRoutes } from './routes/auth.js';
 import { platformRoutes } from './routes/platform.js';
 import { adminRoutes } from './routes/admin.js';
 
-const server = Fastify({ logger: true });
+// trustProxy: the API runs behind Nginx (and Cloudflare) in production, so the
+// real client IP arrives via X-Forwarded-For. Without this, Fastify sees the
+// proxy's loopback address and the per-IP rate limits (Section 11) all key on
+// the same IP. Enabling it makes request.ip the forwarded client IP.
+const server = Fastify({ logger: true, trustProxy: true });
 
 server.register(cors, { origin: config.corsOrigin, credentials: true });
 server.register(cookie); // parses Cookie header into request.cookies; enables reply.setCookie/clearCookie
+// Registered AFTER cookie so request.cookies is already parsed when the
+// plugin's onRequest hook runs our keyGenerator/logging (Section 11).
+// global: false — only routes that opt in via `config.rateLimit` are limited.
+server.register(rateLimit, buildRateLimitOptions(server.log));
 server.register(websocket);
 server.register(healthRoutes);
 server.register(venueRoutes);

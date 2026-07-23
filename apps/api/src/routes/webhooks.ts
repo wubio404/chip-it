@@ -4,7 +4,17 @@ import { commitStock } from '../services/inventory.js';
 import { routeOrder } from '../connectors/router.js';
 import { getPaymobConfig, verifyPaymobHmac } from '../lib/paymob.js';
 import { emitOrderById } from '../lib/order-events.js';
+import { config } from '../lib/config.js';
 import type { CanonicalOrder } from '@taporder/types';
+
+// Section 11: optional Paymob webhook IP allowlist, defense-in-depth ONLY —
+// HMAC verification below is the real authentication. Parsed once at route
+// registration; empty/unset PAYMOB_WEBHOOK_IPS means the check is skipped
+// entirely (fail OPEN — a misconfigured allowlist must never reject a real
+// payment callback). Real ranges come from env/Paymob's docs, never guessed.
+const PAYMOB_IP_ALLOWLIST = new Set(
+  config.paymobWebhookIps.split(',').map((ip) => ip.trim()).filter(Boolean),
+);
 
 interface PaymobWebhookQuery {
   hmac?: string;
@@ -47,7 +57,19 @@ export async function webhookRoutes(fastify: FastifyInstance) {
   // ---------------------------------------------------------------------------
   fastify.post<{ Querystring: PaymobWebhookQuery; Body: PaymobWebhookBody }>(
     '/webhooks/paymob',
+    // Section 11: 100 req/min — generous so legitimate Paymob retries are never
+    // throttled. HMAC verification (below) is the real authentication here; this
+    // is only a blunt ceiling against runaway traffic.
+    { config: { rateLimit: { max: 100, timeWindow: '1 minute' } } },
     async (request, reply) => {
+      // IP allowlist check — only runs if PAYMOB_WEBHOOK_IPS is configured.
+      // A rejection here is a potential-attack signal, not an operational error:
+      // log it as a warning, not something that pages anyone.
+      if (PAYMOB_IP_ALLOWLIST.size > 0 && !PAYMOB_IP_ALLOWLIST.has(request.ip)) {
+        fastify.log.warn({ event: 'paymob_webhook_ip_rejected', ip: request.ip });
+        return reply.status(403).send({ error: 'forbidden' });
+      }
+
       const body = request.body ?? {};
       const obj = body.obj;
       // hmac arrives as a query param; tolerate a body copy as a fallback.

@@ -19,6 +19,7 @@
     "@aws-sdk/s3-request-presigner": "^3.700.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.2.0",
+    "@fastify/rate-limit": "^11.1.0",
     "@fastify/websocket": "^11.0.2",
     "@prisma/client": "^6.9.0",
     "@taporder/types": "*",

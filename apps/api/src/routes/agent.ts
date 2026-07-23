@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
 import { prisma } from '../lib/db.js';
 import { agentManager } from '../agents/manager.js';
+import { checkRateLimit } from '../lib/redis.js';
 
 export async function agentRoutes(fastify: FastifyInstance) {
   fastify.get(
@@ -15,6 +16,19 @@ export async function agentRoutes(fastify: FastifyInstance) {
 
       if (!apiKey) {
         socket.close(4001, 'Unauthorized: missing API key');
+        return;
+      }
+
+      // Section 11: 5 connection attempts/min per API key. @fastify/rate-limit
+      // hooks onRequest/preHandler on normal HTTP request/response routes; this
+      // route hijacks the request into a raw WebSocket via `{ websocket: true }`,
+      // so there's no `reply` to send a 429 through. Using the existing
+      // checkRateLimit Redis helper here instead (same pattern as the image
+      // presign limiter in admin.ts) — a close code stands in for the 429.
+      const { allowed, retryAfter } = await checkRateLimit(`ratelimit:agent_connect:${apiKey}`, 5, 60);
+      if (!allowed) {
+        fastify.log.warn({ event: 'agent_connect_rate_limited', agent_id: apiKey, retry_after: retryAfter });
+        socket.close(4029, 'rate_limit_exceeded');
         return;
       }
 
