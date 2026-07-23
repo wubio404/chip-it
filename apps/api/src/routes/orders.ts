@@ -36,6 +36,8 @@ export async function orderRoutes(fastify: FastifyInstance) {
   fastify.post<{ Body: CreateOrderBody }>(
     '/orders',
     {
+      // Section 11: 10 req/min per IP (prevents cart spam).
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
       schema: {
         body: {
           type: 'object',

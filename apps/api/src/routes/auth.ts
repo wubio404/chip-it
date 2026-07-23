@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../lib/db.js';
+import { redis, checkRateLimit } from '../lib/redis.js';
 import { verifyPassword } from '../lib/password.js';
 import {
   signAccessToken,
@@ -26,6 +27,24 @@ interface MeQuery {
   venue?: string; // venue slug from the /admin/[venue] URL — see /admin/me below
 }
 
+// ---------------------------------------------------------------------------
+// Failed-login throttling (stateful — built on the existing checkRateLimit
+// Redis helper, NOT the @fastify/rate-limit plugin used elsewhere in this
+// session; see the session brief's "two mechanisms, deliberately split").
+//
+// Two buckets, both counted on THIS call (see below) and reset on success:
+//   - IP:    the attacker's cost. Tight — 10 attempts / 5 min.
+//   - email: a secondary, LOOSER bucket (30 / 5 min) so a distributed spray
+//     against one victim email (many IPs, each under the IP threshold) still
+//     gets throttled eventually. It is intentionally never used to hard-lock
+//     an account: it's the same time-windowed, self-expiring throttle as the
+//     IP bucket, not a permanent ban, so a real login from a fresh IP still
+//     only has to clear its own (unaffected) IP bucket.
+// ---------------------------------------------------------------------------
+const LOGIN_IP_MAX = 10;
+const LOGIN_EMAIL_MAX = 30;
+const LOGIN_WINDOW_SECONDS = 5 * 60;
+
 export async function authRoutes(fastify: FastifyInstance) {
   // -------------------------------------------------------------------------
   // POST /auth/login — email + password → sets access + refresh cookies.
@@ -47,9 +66,27 @@ export async function authRoutes(fastify: FastifyInstance) {
     },
     async (request, reply) => {
       const { email, password } = request.body;
+      const normalizedEmail = email.toLowerCase().trim();
+      const ipKey = `ratelimit:login_ip:${request.ip}`;
+      const emailKey = `ratelimit:login_email:${normalizedEmail}`;
+
+      // Count THIS attempt against both buckets up front — before touching the DB
+      // or bcrypt — so an already-throttled caller is turned away cheaply. A
+      // successful login resets both keys below, so only failed (or currently
+      // in-flight) attempts persist as throttle pressure.
+      const [ipLimit, emailLimit] = await Promise.all([
+        checkRateLimit(ipKey, LOGIN_IP_MAX, LOGIN_WINDOW_SECONDS),
+        checkRateLimit(emailKey, LOGIN_EMAIL_MAX, LOGIN_WINDOW_SECONDS),
+      ]);
+      if (!ipLimit.allowed || !emailLimit.allowed) {
+        const retryAfter = Math.max(ipLimit.retryAfter, emailLimit.retryAfter);
+        fastify.log.warn({ event: 'login_rate_limited', ip: request.ip, retry_after: retryAfter });
+        reply.header('Retry-After', String(retryAfter));
+        return reply.status(429).send({ error: 'rate_limit_exceeded', retry_after: retryAfter });
+      }
 
       const user = await prisma.user.findUnique({
-        where: { email: email.toLowerCase().trim() },
+        where: { email: normalizedEmail },
         select: { id: true, password_hash: true, role: true, venue_id: true },
       });
 
@@ -60,6 +97,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (!user || !(await verifyPassword(password, user.password_hash))) {
         return reply.status(401).send({ error: 'invalid_credentials' });
       }
+
+      // Success — clear both throttle counters so this account/IP starts clean.
+      await redis.del(ipKey, emailKey).catch(() => {});
 
       const claims: AuthClaims = { sub: user.id, role: user.role, venue_id: user.venue_id };
 

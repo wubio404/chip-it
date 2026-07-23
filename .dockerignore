@@ -1,0 +1,37 @@
+# Build context is the repo root. Keep the context small and — critically —
+# keep secrets and host-built artifacts OUT of the image.
+
+# Dependencies — reinstalled cleanly inside the image via `npm ci`.
+node_modules
+**/node_modules
+
+# Secrets — NEVER copied into the image. Runtime env is injected by the host.
+.env
+.env.*
+**/.env
+**/.env.*
+admin.txt
+staff.txt
+
+# Build outputs — regenerated inside the image; host copies would be stale/wrong-OS.
+**/dist
+apps/web/.next
+**/.next
+.turbo
+**/.turbo
+
+# VCS / tooling / local noise
+.git
+.gitignore
+**/*.log
+npm-debug.log*
+.DS_Store
+.vscode
+.idea
+
+# Docker/deploy files themselves — not needed inside the image.
+Dockerfile
+**/Dockerfile
+.dockerignore
+docker-compose.yml
+deploy

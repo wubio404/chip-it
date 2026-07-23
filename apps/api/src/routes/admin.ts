@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from '../lib/db.js';
 import { redis, checkRateLimit } from '../lib/redis.js';
 import { requireAuth, requireVenueMatch } from '../middleware/auth.js';
+import { resolveRequesterKey } from '../lib/rate-limit.js';
 import { releaseReservation, restockCommitted } from '../services/inventory.js';
 import { reverseOrderPayment, PaymobReversalError } from '../services/refunds.js';
 import { emitOrderById, onOrderEvent, ORDER_ADMIN_SELECT } from '../lib/order-events.js';
@@ -48,6 +49,10 @@ function httpError(statusCode: number, message: string): Error {
   return Object.assign(new Error(message), { statusCode });
 }
 
+// Section 11: 30 req/min per AUTHENTICATED USER (not IP) for POST /admin/*.
+// Shared across every mutating admin route below.
+const ADMIN_RATE_LIMIT = { max: 30, timeWindow: '1 minute', keyGenerator: resolveRequesterKey } as const;
+
 // Venue-scoped staff surface (Section 5.2). VENUE_STAFF may only touch their own
 // venue; PLATFORM_ADMIN may touch any. The scoping is enforced by requireVenueMatch
 // server-side, independent of the URL the caller constructs.
@@ -58,6 +63,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
     '/admin/venues/:id/items/:sku/toggle',
     {
       preHandler: [requireAuth, requireVenueMatch('id')],
+      config: { rateLimit: ADMIN_RATE_LIMIT },
       schema: {
         params: {
           type: 'object',
@@ -268,6 +274,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
     '/admin/venues/:venueId/orders/:orderId/cancel',
     {
       preHandler: [requireAuth, requireVenueMatch('venueId')],
+      config: { rateLimit: ADMIN_RATE_LIMIT },
       schema: {
         params: {
           type: 'object',
@@ -375,6 +382,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
     '/admin/venues/:venueId/orders/:orderId/collect',
     {
       preHandler: [requireAuth, requireVenueMatch('venueId')],
+      config: { rateLimit: ADMIN_RATE_LIMIT },
       schema: {
         params: {
           type: 'object',
@@ -469,6 +477,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
     '/admin/venues/:id/items/:sku/image/presign',
     {
       preHandler: [requireAuth, requireVenueMatch('id'), presignRateLimit],
+      config: { rateLimit: ADMIN_RATE_LIMIT },
       schema: {
         params: itemImageParamsSchema,
         body: {
@@ -540,6 +549,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
     '/admin/venues/:id/items/:sku/image/confirm',
     {
       preHandler: [requireAuth, requireVenueMatch('id')],
+      config: { rateLimit: ADMIN_RATE_LIMIT },
       schema: {
         params: itemImageParamsSchema,
         body: {

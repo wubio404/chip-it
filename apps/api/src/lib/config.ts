@@ -12,6 +12,23 @@ for (const key of REQUIRED) {
   }
 }
 
+// CORS_ORIGIN and COOKIE_DOMAIN both have permissive localhost-friendly dev
+// defaults below (see PRODUCTION AUTH CHECKLIST). That's convenient locally but
+// dangerous in production: an unset CORS_ORIGIN would silently allow only
+// http://localhost:3001 (breaking real traffic loudly, at least) while an unset
+// COOKIE_DOMAIN would silently scope the auth cookie to api.* only — a quiet
+// auth break, not a boot failure. Refuse to boot in production rather than let
+// either fall back to its dev default.
+if ((process.env.NODE_ENV ?? 'development') === 'production') {
+  const REQUIRED_IN_PROD = ['CORS_ORIGIN', 'COOKIE_DOMAIN'] as const;
+  for (const key of REQUIRED_IN_PROD) {
+    if (!process.env[key]) {
+      process.stderr.write(`FATAL: missing required env var in production: ${key}\n`);
+      process.exit(1);
+    }
+  }
+}
+
 // ─── PRODUCTION AUTH CHECKLIST (Section 6) ───────────────────────────────────
 // Auth cookies and JWTs misbehave silently if these are wrong in prod:
 //   1. JWT_ACCESS_SECRET / JWT_REFRESH_SECRET — set to FRESH random values on the
@@ -41,6 +58,10 @@ export const config = {
   apiBaseUrl: process.env.API_BASE_URL ?? '',     // this server's public origin — used for Paymob notification_url
   cookieDomain: process.env.COOKIE_DOMAIN ?? '',  // apex domain for cross-subdomain cookies; leave empty locally. PROD: otlobly.org (else app./api. can't share the auth cookie)
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:3001',  // allowed CORS origin
+  // Optional Paymob webhook IP allowlist (Section 11), comma-separated. Defense-in-depth
+  // ONLY — the HMAC check (5.8/21.4) is the real authentication. Empty/unset = skip the
+  // IP check entirely; never let a misconfigured allowlist block a real payment callback.
+  paymobWebhookIps: process.env.PAYMOB_WEBHOOK_IPS ?? '',
   guestEmail: process.env.PLATFORM_GUEST_EMAIL ?? 'guest@example.com',  // placeholder for Paymob billing_data
   // Cloudflare R2 (S3-compatible) — menu image uploads (Section 12 / Phase 2 item 4).
   // Not in REQUIRED: validated at request time in lib/r2.ts, same pattern as Paymob.

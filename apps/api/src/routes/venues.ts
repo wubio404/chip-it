@@ -8,6 +8,8 @@ export async function venueRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { slug: string } }>(
     '/venues/:slug',
     {
+      // Section 11: 60 req/min per IP (menu browsing).
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
       schema: {
         params: {
           type: 'object',
